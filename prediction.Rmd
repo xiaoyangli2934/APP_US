@@ -1,0 +1,481 @@
+---
+title: "Prediction"
+author: "Xiaoyang Li"
+date: "2020/11/5"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(MASS)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(ggstatsplot)
+```
+
+## Data clean
+```{r}
+
+# data import
+data = read_delim("data.dat", "\t", escape_double = FALSE, trim_ws = TRUE) 
+
+# 96 patients and remove comments column
+data = data[1:96,] %>% dplyr::select(SurgPathFindings,SeqentialStaging, Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A, Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,  Presenceoffecalith_A, Presenceofsurroundingfreefluid_A) %>% 
+  rename(Surg = SurgPathFindings,
+         US2 = SeqentialStaging,
+         Appdiam = Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A,
+         Muralthick = Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,
+         fecalith = Presenceoffecalith_A,
+         freefluid = Presenceofsurroundingfreefluid_A) %>% 
+  mutate(surg_bi = case_when(Surg >=3 ~ 1,
+                             Surg <3 ~ 0),
+         US2_ = case_when(US2 >=3 ~ 1,
+                         US2 <3 ~ 0),
+         lossSM = case_when(US2 >= 3 ~ "1",
+                            US2 <3 ~ "0"),
+         Muralthick = as.numeric(Muralthick)
+         ) 
+US = data %>% dplyr::select(US2_, surg_bi)
+US = drop_na(US) %>% filter()
+
+data$fecalith[data$fecalith == "Missing"] = NA
+data$freefluid[data$freefluid == "Missing"] = NA
+
+data = data %>% dplyr::select(surg_bi, Appdiam, Muralthick, fecalith , freefluid , lossSM,Surg)
+data = drop_na(data) # 61
+str(data) 
+```
+
+## Visualization
+
+```{r}
+# data import
+data = read_delim("data.dat", "\t", escape_double = FALSE, trim_ws = TRUE) 
+
+data = data[1:96,] %>% dplyr::select(SurgPathFindings,SeqentialStaging, Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A, Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,  Presenceoffecalith_A, Presenceofsurroundingfreefluid_A) %>% 
+  rename(Surg = SurgPathFindings,
+         US2 = SeqentialStaging,
+         Appdiam = Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A,
+         Muralthick = Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,
+         fecalith = Presenceoffecalith_A,
+         freefluid = Presenceofsurroundingfreefluid_A) %>% 
+  mutate(Muralthick = as.numeric(Muralthick),
+         Surg = as.factor(Surg)) %>% 
+  filter(!is.na(Surg)) 
+
+data = data[-59,]
+
+data$fecalith[data$fecalith == "Missing"] = NA
+data$freefluid[data$freefluid == "Missing"] = NA
+
+
+# Appdiam
+dataA = data %>% filter(Appdiam <= 2)
+ggplot(dataA, aes(x = Surg, y = Appdiam)) + geom_boxplot()
+
+aov1 <- aov(Appdiam~Surg, data = data)
+summary(aov1)
+
+pairwise.t.test(data$Appdiam, data$Surg, p.adj = 'bonferroni')
+TukeyHSD(aov1)
+
+# Muralthick
+ggplot(dataA, aes(Surg, y = Muralthick)) + geom_boxplot()
+
+aov2 <- aov(Muralthick~Surg, data = data)
+summary(aov2)
+
+pairwise.t.test(data$Muralthick, data$Surg, p.adj = 'bonferroni')
+TukeyHSD(aov2)
+
+# Fecalith
+
+ggpiestats(data, x = fecalith, y = Surg)
+
+fisher.test(data$fecalith,data$Surg)
+
+# Free fluid
+
+ggpiestats(data, x = freefluid, y = Surg)
+
+fisher.test(data$freefluid,data$Surg)
+```
+
+
+
+
+## Logistic regression
+
+
+1) loss of normal echogenic submucosal layer: In the dataset, loss of SM layer is captured by the ultrasound and is described as stage IV: Gangrenous.
+2) mural hyperemia: Maximum mural thickness 
+3) periappendiceal fluid: Presence of surrounding free fluid
+4) appendicolith: presence of fecalith
+5) appendix wall diameter: largest diameter of appendix
+
+```{r}
+# choose model
+glm1 = glm(data = data, surg_bi ~ . , family=binomial(link='logit')) 
+summary(glm1)
+
+step = glm2 %>% stepAIC(trace = FALSE)
+glm2 = glm(data = data, surg_bi ~ Appdiam + fecalith + freefluid , family=binomial(link='logit')) 
+summary(glm2)
+
+data_ = data %>% mutate(
+  freefluidcom = case_when(freefluid == "Yes; complex" ~ "1",
+                           freefluid != "Yes; complex" ~ "0"),
+  freefluid_ = case_when(freefluid == "Yes; complex" ~ "1",
+                         freefluid == "Yes; simple" ~ "1",
+                         freefluid == "Yes;" ~ "1",
+                         freefluid == "No" ~ "0")
+)
+
+glm3 = glm(data = data_,surg_bi ~ Appdiam + Muralthick +  fecalith + freefluid_ + lossSM , family=binomial(link='logit')) 
+summary(glm3)
+step3 = glm3 %>% stepAIC(trace = FALSE)
+glm3_ = glm(formula = surg_bi ~ Appdiam + lossSM, family = binomial(link = "logit"), 
+    data = data_)
+summary(glm3_)
+
+
+
+glm4 = glm(data = data_, surg_bi ~ Appdiam + Muralthick +  fecalith + freefluidcom + lossSM, family=binomial(link='logit')) 
+summary(glm4)
+step4 = glm4 %>% stepAIC(trace = FALSE)
+glm4_ = glm(formula = surg_bi ~ Appdiam  + freefluidcom + lossSM, family = binomial(link = "logit"), 
+    data = data_)
+summary(glm4_)
+
+
+# prediction
+
+
+confusionMatrix(data = as.factor(US$US2_),
+                   reference = as.factor(US$surg_bi), positive = "1")
+
+glm = glm4_
+glm_prob = predict(glm, newdata = data_, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                   reference = as.factor(data_$surg_bi), positive = "1")
+
+
+glm = glm3_
+glm_prob = predict(glm, newdata = data_, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+CM = confusionMatrix(data = as.factor(glm_pred),
+                   reference = as.factor(data_$surg_bi), positive = "1")
+
+
+# use appendiam as continuous variable in glm
+roc = roc(as.factor(data_$surg_bi), glm_prob)
+plot(roc, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc), add = TRUE)
+
+```
+
+### set cut off of appendiam
+
+```{r}
+Data = data_
+hist(Data$Appdiam)
+grid = seq(0.8,1.4, by = 0.1)
+diam = list()
+for (i in 1:7) {
+  diam[[i]] = ifelse(Data$Appdiam > grid[i], 1, 0) 
+  diam[[i]] = as.factor(diam[[i]])
+  Data = cbind(Data, diam[[i]])
+  
+}
+
+colnames(Data) = c("surg_bi", "Appdiam", "Muralthick", "fecalith", "freefluid", "lossSM", "freefluidcom", "freefluid_", "diam1", "diam2", "diam3", "diam4", "diam5", "diam6", "diam7")
+
+# diam1
+glm3_1 = glm(formula = surg_bi ~ diam1 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_1)
+
+glm = glm3_1
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc1 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc1, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc1), add = TRUE)
+
+# diam2
+glm3_2 = glm(formula = surg_bi ~ diam2 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_2)
+
+glm = glm3_2
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc2 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc2, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc2), add = TRUE)
+
+# diam3
+glm3_3 = glm(formula = surg_bi ~ diam3 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_3)
+
+glm = glm3_3
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+CM3 = confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc3 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc3, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc3), add = TRUE)
+
+# diam4
+glm3_4 = glm(formula = surg_bi ~ diam4 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_4)
+
+glm = glm3_4
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+CM4= confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc4 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc4, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc4), add = TRUE)
+
+# diam5
+glm3_5 = glm(formula = surg_bi ~ diam5 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_5)
+
+glm = glm3_5
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+CM5= confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc5 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc5, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc5), add = TRUE)
+
+# diam6
+glm3_6 = glm(formula = surg_bi ~ diam6 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_6)
+
+glm = glm3_6
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc6 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc6, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc6), add = TRUE)
+
+# diam7
+glm3_7 = glm(formula = surg_bi ~ diam7 + lossSM, family = binomial(link = "logit"), 
+    data = Data)
+summary(glm3_7)
+
+glm = glm3_7
+glm_prob = predict(glm, newdata = Data, type = "response")
+glm_pred = rep("0", 61)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(Data$surg_bi), positive = "1")
+roc7 = roc(as.factor(Data$surg_bi), glm_prob)
+plot(roc7, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc7), add = TRUE)
+
+# pick 3,4,5
+CM$overall[1:2]
+CM3$overall[1:2]
+CM4$overall[1:2]
+CM5$overall[1:2]
+CM$byClass[1:2]
+CM3$byClass[1:2]
+CM4$byClass[1:2]
+CM5$byClass[1:2]
+CM$table
+CM3$table
+CM4$table
+CM5$table
+
+
+plot(roc, legacy.axes = TRUE,  col = 1, thresholder = "best", print.thres ="best")
+plot(roc3, legacy.axes = TRUE, col = 2, add = TRUE)
+plot(roc4, legacy.axes = TRUE,  col = 3, add = TRUE)
+plot(roc5, legacy.axes = TRUE,  col = 4, add = TRUE)
+legend("bottomright",
+       legend = c("continuous, auc: 0.882","Cutoff at 1, auc = 0.876","Cutoff at 1.1, auc = 0.883","Cutoff at 1.2, auc = 0.890"),
+       col = 1:4, lty = 1
+       )
+
+plot(roc, legacy.axes = TRUE,  col = 1, thresholder = "best", print.thres ="best")
+plot(roc3, legacy.axes = TRUE, col = 2, thresholder = "best", print.thres ="best")
+plot(roc4, legacy.axes = TRUE,  col = 3, thresholder = "best", print.thres ="best")
+plot(roc5, legacy.axes = TRUE,  col = 4, thresholder = "best", print.thres ="best")
+```
+
+
+## Ordinal 
+```{r}
+
+# data import
+data = read_delim("data.dat", "\t", escape_double = FALSE, trim_ws = TRUE) 
+
+# 96 patients and remove comments column
+data = data[1:96,] %>% dplyr::select(SurgPathFindings,SeqentialStaging, Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A, Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,  Presenceoffecalith_A, Presenceofsurroundingfreefluid_A) %>% 
+  rename(Surg = SurgPathFindings,
+         US2 = SeqentialStaging,
+         Appdiam = Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A,
+         Muralthick = Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,
+         fecalith = Presenceoffecalith_A,
+         freefluid = Presenceofsurroundingfreefluid_A) %>% 
+  mutate(surg_bi = case_when(Surg >=3 ~ 1,
+                             Surg <3 ~ 0),
+         US2_ = case_when(US2 >=3 ~ 1,
+                         US2 <3 ~ 0),
+         lossSM = case_when(US2 >= 3 ~ "1",
+                            US2 <3 ~ "0"),
+         Muralthick = as.numeric(Muralthick),
+         freefluid = case_when(freefluid == "Yes" ~"Yes;",
+                               freefluid != "Yes" ~ freefluid)
+         ) 
+
+data_ = data %>% mutate(
+  freefluidcom = case_when(freefluid == "Yes; complex" ~ "1",
+                           freefluid != "Yes; complex" ~ "0"),
+  freefluid_ = case_when(freefluid == "Yes; complex" ~ "1",
+                         freefluid == "Yes; simple" ~ "1",
+                         freefluid == "Yes;" ~ "1",
+                         freefluid == "No" ~ "0"),
+  surg = factor(Surg)
+) 
+
+data_ = drop_na(data_)
+
+ord = polr(surg ~ Appdiam + Muralthick + fecalith  +freefluidcom + lossSM, data = data_  )
+summary(ord)
+```
+
+
+## Decision tree - pass
+```{r}
+rpart1 = rpart(surg_bi ~ Appdiam + Muralthick +  fecalith + freefluid_ + lossSM,
+   method="class", data=data_)
+rpart2 = rpart(surg_bi ~ Appdiam + Muralthick +  fecalith + freefluidcom + lossSM,
+   method="class", data=data_)
+
+print(rpart1)
+print(rpart2)
+rpart.plot(rpart1)
+rpart.plot(rpart2)
+
+```
+
+## Supplement 1.13
+
+```{r}
+data = data %>% dplyr::select(surg_bi, Appdiam, Muralthick, fecalith , freefluid , lossSM,Surg)
+
+data_ = data %>% mutate(
+  freefluid_ = case_when(freefluid == "Yes; complex" ~ "1",
+                         freefluid == "Yes; simple" ~ "1",
+                         freefluid == "Yes;" ~ "1",
+                         freefluid == "No" ~ "0"),
+  app_ = case_when(Appdiam >1 ~ "1",
+                   Appdiam <=1 ~ "0"),
+  fecalith = case_when(fecalith == "Yes" ~ "1",
+                       fecalith == "No" ~ "0")
+) %>% dplyr::select(surg_bi, app_, fecalith, freefluid_, lossSM) %>% drop_na()#74
+
+glm1 = glm(data = data_, surg_bi ~ . , family=binomial(link='logit')) 
+summary(glm1)
+
+glm = glm1
+glm_prob = predict(glm, newdata = data_, type = "response")
+glm_pred = rep("0", 74)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(data_$surg_bi), positive = "1")
+roc1 = roc(as.factor(data_$surg_bi), glm_prob)
+plot(roc1, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc1), add = TRUE)
+
+glm2 = glm(data = data_, surg_bi ~ app_ + fecalith + lossSM , family=binomial(link='logit')) 
+summary(glm2)
+
+glm = glm2
+glm_prob = predict(glm, newdata = data_, type = "response")
+glm_pred = rep("0", 74)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(data_$surg_bi), positive = "1")
+roc2 = roc(as.factor(data_$surg_bi), glm_prob)
+plot(roc2, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc2), add = TRUE)
+
+glm3 = glm(data = data_, surg_bi ~ app_ + freefluid_ + lossSM , family=binomial(link='logit')) 
+summary(glm3)
+
+glm = glm3
+glm_prob = predict(glm, newdata = data_, type = "response")
+glm_pred = rep("0", 74)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(data_$surg_bi), positive = "1")
+roc3 = roc(as.factor(data_$surg_bi), glm_prob)
+plot(roc3, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc3), add = TRUE)
+
+glm4 = glm(data = data_, surg_bi ~ app_ +  lossSM , family=binomial(link='logit')) 
+summary(glm4)
+
+glm = glm4
+glm_prob = predict(glm, newdata = data_, type = "response")
+glm_pred = rep("0", 74)
+glm_pred[glm_prob >0.5] = "1"
+confusionMatrix(data = as.factor(glm_pred),
+                reference = as.factor(data_$surg_bi), positive = "1")
+roc4 = roc(as.factor(data_$surg_bi), glm_prob)
+plot(roc4, legacy.axes = TRUE, print.auc = TRUE, col = 4)
+plot(smooth(roc4), add = TRUE)
+
+
+confusionMatrix(data = as.factor(data_$lossSM),
+                reference = as.factor(data_$surg_bi), positive = "1")
+
+
+fisher.test(data_$lossSM, data_$fecalith)
+
+confusionMatrix(data = as.factor(data_$fecalith),
+                reference = as.factor(data_$lossSM), positive = "1")
+
+
+fisher.test(data_$lossSM, data_$freefluid_)
+
+confusionMatrix(data = as.factor(data_$freefluid_),
+                reference = as.factor(data_$lossSM), positive = "1")
+
+fisher.test(data_$lossSM, data_$app_)
+
+confusionMatrix(data = as.factor(data_$app_),
+                reference = as.factor(data_$lossSM), positive = "1")
+```
+
+

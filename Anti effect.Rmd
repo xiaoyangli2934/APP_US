@@ -1,0 +1,83 @@
+---
+title: "Antibiotic effect"
+author: "Xiaoyang Li"
+date: "2020/10/8"
+output: html_document
+---
+```{r}
+library(tidyverse)
+
+data = read_delim("C:/Users/Xiaoyang Li/Desktop/data/App/data.dat", "\t", escape_double = FALSE, trim_ws = TRUE) 
+data = data[1:96,] %>% dplyr::select(-Comments)
+
+data = data%>% dplyr::select(SurgPathFindings,SeqentialStaging,InitialStaging, Largestdiameterofappendixmeasuredanteriortoposteriorwithcompress,  Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A,Maximalmuralthicknessdistancefromhyperechoicluminalinterfacetoou, Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A, AntibioticsgivencheckallthatapplySelectedChoice, AntibioticsgivenSelectedChoice ) %>% 
+  mutate(
+    change = SeqentialStaging - InitialStaging,
+    anti1 = 0,
+    anti2 = 0
+  ) %>% 
+  rename(Surg = SurgPathFindings,
+               US1 = InitialStaging,
+               US2 = SeqentialStaging,
+               Appdiam1 = Largestdiameterofappendixmeasuredanteriortoposteriorwithcompress,
+               Muralthick1 = Maximalmuralthicknessdistancefromhyperechoicluminalinterfacetoou,
+               Appdiam2 = Largestdiameterofappendixmeasuredanteriortoposteriorwithcompre_A,
+               Muralthick2 = Maximalmuralthicknessdistancefromhyperechoicluminalinterfaceto_A,
+               Antibiotic1 = AntibioticsgivencheckallthatapplySelectedChoice,
+               Antibiotic2 = AntibioticsgivenSelectedChoice) 
+  
+
+for (i in 1:59) {
+  if(data$Antibiotic1[i] == "None given"){
+  data$anti1[i] = 0
+}else{
+  data$anti1[i] = 1
+  }
+}
+
+for (i in 1:59) {
+  if(data$Antibiotic2[i] == "None given"){
+  data$anti2[i] = 0
+}else{
+  data$anti2[i] = 1
+  }
+}
+
+
+## diameter
+
+data_app = data %>% mutate(diff_diam = Appdiam2 - Appdiam1) %>% dplyr::select(diff_diam, anti1)
+data_app = na.omit(data_app)
+
+table(data_app$anti1)
+
+ggplot(data_app, aes(x = factor(anti1), y = diff_diam)) + geom_boxplot()
+t.test(diff_diam ~ factor(anti1), data_app)
+
+data_app_ = data_app[-which.max(abs(data_app$diff_diam)),]
+
+data_app_ = data_app_[-which.max(abs(data_app_$diff_diam)),]
+
+ggplot(data_app_, aes(x = factor(anti1), y = diff_diam)) + geom_boxplot()
+t.test(diff_diam ~ factor(anti1), data[-which.min(data_app_$diff_diam),])
+
+## mural thickness
+
+data_thick = data %>% mutate(Muralthick1 = as.numeric(Muralthick1), 
+                       Muralthick2 = as.numeric(Muralthick2),
+                       diff_thick = Muralthick2 - Muralthick1 ) %>% dplyr::select(diff_thick, anti1)
+
+
+data_thick = na.omit(data_thick)
+
+table(data_thick$anti1)
+
+ggplot(data_thick, aes(x = factor(anti1), y = diff_thick)) + geom_boxplot()
+t.test(diff_thick ~ factor(anti1), data_thick)
+
+ggplot(data_thick[-which.min(data_thick$diff_thick),], aes(x = factor(anti1), y = diff_thick)) + geom_boxplot()
+t.test(diff_thick ~ factor(anti1), data_thick[-which.min(data_thick$diff_thick),])
+
+
+```
+
